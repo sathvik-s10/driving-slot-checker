@@ -2,7 +2,7 @@ name: Check Driving Slots
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch: {}
 
 jobs:
@@ -20,6 +20,12 @@ jobs:
 
       - run: npx playwright install --with-deps chromium
 
+      - uses: actions/cache/restore@v4
+        with:
+          path: session.json
+          key: tds-session-${{ github.run_id }}
+          restore-keys: tds-session-
+
       - run: node check-slots.js
         env:
           TDS_USERNAME: ${{ secrets.TDS_USERNAME }}
@@ -28,3 +34,9 @@ jobs:
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
           TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
           TWILIO_TO_NUMBER: ${{ secrets.TWILIO_TO_NUMBER }}
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: session.json
+          key: tds-session-${{ github.run_id }}

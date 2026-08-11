@@ -3,3 +3,4 @@ node_modules/
 *.log
 screenshot.png
 error.png
+session.json

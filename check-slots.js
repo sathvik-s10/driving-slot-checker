@@ -2,12 +2,13 @@ import 'dotenv/config';
 import { chromium } from 'playwright';
 import twilio from 'twilio';
 import { spawn } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOG_FILE = join(__dirname, 'check.log');
+const SESSION_FILE = join(__dirname, 'session.json');
 
 const LOGIN_URL = 'https://www.tds.ms/CentralizeSP/Student/Login/Redmond911';
 const SCHEDULE_URL = 'https://www.tds.ms/CentralizeSP/BtwScheduling/Lessons?SchedulingTypeId=1';
@@ -54,6 +55,21 @@ async function callPhone() {
   }
 }
 
+async function isLoggedOut(page) {
+  // the login form's #username field is only present when we've been bounced back to the login page
+  return (await page.$('#username')) !== null;
+}
+
+async function login(page, username, password) {
+  await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' });
+  await page.fill('#username', username);
+  await page.fill('#password', password);
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded' }).catch(() => {}),
+    page.click('button.btn.green-haze.pull-right')
+  ]);
+}
+
 async function main() {
   const { TDS_USERNAME, TDS_PASSWORD } = process.env;
   if (!TDS_USERNAME || !TDS_PASSWORD) {
@@ -62,16 +78,22 @@ async function main() {
   }
 
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const hasSession = existsSync(SESSION_FILE);
+  const context = await browser.newContext(hasSession ? { storageState: SESSION_FILE } : {});
+  const page = await context.newPage();
 
   try {
-    await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' });
-    await page.fill('#username', TDS_USERNAME);
-    await page.fill('#password', TDS_PASSWORD);
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded' }).catch(() => {}),
-      page.click('button.btn.green-haze.pull-right')
-    ]);
+    if (hasSession) {
+      await page.goto(SCHEDULE_URL, { waitUntil: 'domcontentloaded' });
+    }
+
+    if (!hasSession || (await isLoggedOut(page))) {
+      log(hasSession ? 'Saved session expired, logging in again' : 'No saved session, logging in');
+      await login(page, TDS_USERNAME, TDS_PASSWORD);
+      await context.storageState({ path: SESSION_FILE });
+    } else {
+      log('Reused saved session, no login needed');
+    }
 
     await page.goto(SCHEDULE_URL, { waitUntil: 'networkidle' });
     // give the calendar widget time to render after login redirect
