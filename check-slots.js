@@ -67,6 +67,32 @@ async function login(page, username, password) {
   ]);
 }
 
+async function scrapeMonth(page) {
+  const monthLabel = await page.$eval('.ui-datepicker-title', (el) => el.textContent.trim()).catch(() => 'unknown month');
+  const days = await page.$$eval('td[class*="ui-state-"]', (cells) => {
+    return cells
+      .map((td) => {
+        const text = (td.textContent || '').trim();
+        const match = text.match(/\d{1,2}/);
+        if (!match) return null;
+        return { day: match[0], available: td.className.includes('ui-state-available') };
+      })
+      .filter(Boolean);
+  });
+  return { monthLabel, days };
+}
+
+async function goToNextMonth(page) {
+  const before = await page.$eval('.ui-datepicker-title', (el) => el.textContent.trim()).catch(() => null);
+  await page.click('.ui-datepicker-next');
+  await page.waitForFunction(
+    (prev) => document.querySelector('.ui-datepicker-title')?.textContent.trim() !== prev,
+    before,
+    { timeout: 10000 }
+  ).catch(() => {});
+  await page.waitForTimeout(500);
+}
+
 async function main() {
   const { TDS_USERNAME, TDS_PASSWORD } = process.env;
   if (!TDS_USERNAME || !TDS_PASSWORD) {
@@ -96,29 +122,40 @@ async function main() {
     // give the calendar widget time to render after login redirect
     await page.waitForTimeout(2000);
 
-    const days = await page.$$eval('td[class*="ui-state-"]', (cells) => {
-      return cells
-        .map((td) => {
-          const text = (td.textContent || '').trim();
-          const match = text.match(/\d{1,2}/);
-          if (!match) return null;
-          return { day: match[0], available: td.className.includes('ui-state-available') };
-        })
-        .filter(Boolean);
-    });
+    const MONTHS_TO_CHECK = 3;
+    const allAvailable = [];
+    let totalDaysChecked = 0;
+    let anyZeroDayWarning = false;
 
-    await page.screenshot({ path: join(__dirname, 'screenshot.png'), fullPage: true });
+    for (let i = 0; i < MONTHS_TO_CHECK; i++) {
+      const { monthLabel, days } = await scrapeMonth(page);
+      await page.screenshot({ path: join(__dirname, `screenshot-${i + 1}.png`), fullPage: true });
 
-    const available = days.filter((d) => d.available);
+      if (days.length === 0) {
+        anyZeroDayWarning = true;
+        log(`WARNING: found 0 day cells for ${monthLabel} - selector heuristic may not match this page, check screenshot-${i + 1}.png`);
+      } else {
+        totalDaysChecked += days.length;
+        const available = days.filter((d) => d.available);
+        if (available.length > 0) {
+          allAvailable.push({ monthLabel, days: available.map((d) => d.day) });
+        }
+      }
 
-    if (days.length === 0) {
-      log('WARNING: found 0 day cells - selector heuristic may not match this page, check screenshot.png');
-    } else if (available.length > 0) {
-      log(`SLOT AVAILABLE: days ${available.map((d) => d.day).join(', ')}`);
+      if (i < MONTHS_TO_CHECK - 1) {
+        await goToNextMonth(page);
+      }
+    }
+
+    if (allAvailable.length > 0) {
+      const summary = allAvailable.map((m) => `${m.monthLabel}: ${m.days.join(', ')}`).join(' | ');
+      log(`SLOT AVAILABLE: ${summary}`);
       notify();
       await callPhone();
+    } else if (anyZeroDayWarning && totalDaysChecked === 0) {
+      log('WARNING: no day cells found in any checked month, check screenshots');
     } else {
-      log(`No open slots. Checked ${days.length} days, none green.`);
+      log(`No open slots. Checked ${totalDaysChecked} days across ${MONTHS_TO_CHECK} months, none green.`);
     }
   } catch (err) {
     log(`ERROR: ${err.message}`);

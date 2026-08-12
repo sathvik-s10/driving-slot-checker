@@ -2,6 +2,7 @@
 node_modules/
 *.log
 screenshot.png
+screenshot-*.png
 error.png
 session.json
 live-calendar.png
