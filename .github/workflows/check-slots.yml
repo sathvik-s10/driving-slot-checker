@@ -40,3 +40,11 @@ jobs:
         with:
           path: session.json
           key: tds-session-${{ github.run_id }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: latest-screenshot
+          path: screenshot.png
+          retention-days: 1
+          overwrite: true

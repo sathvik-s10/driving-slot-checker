@@ -19,9 +19,6 @@ function log(msg) {
   appendFileSync(LOG_FILE, line + '\n');
 }
 
-function isGreenMarker(marker) {
-  return !!marker && marker.toLowerCase().includes('green.png');
-}
 
 function notify() {
   if (process.platform !== 'win32') {
@@ -99,35 +96,23 @@ async function main() {
     // give the calendar widget time to render after login redirect
     await page.waitForTimeout(2000);
 
-    const days = await page.$$eval('*', (els) => {
-      return els
-        .filter((el) => el.children.length === 0 && /^\d{1,2}$/.test((el.textContent || '').trim()))
-        .map((el) => {
-          let node = el;
-          let marker = null;
-          for (let i = 0; i < 5 && node && !marker; i++) {
-            const cs = getComputedStyle(node);
-            const bgImage = cs.backgroundImage;
-            if (bgImage && bgImage !== 'none' && /(green|pink|gray|grey)\.png/i.test(bgImage)) {
-              marker = bgImage;
-              break;
-            }
-            const img = node.querySelector ? node.querySelector('img[src*="colorimages"]') : null;
-            if (img) {
-              marker = img.src;
-              break;
-            }
-            node = node.parentElement;
-          }
-          return { day: el.textContent.trim(), marker };
-        });
+    const days = await page.$$eval('td[class*="ui-state-"]', (cells) => {
+      return cells
+        .map((td) => {
+          const text = (td.textContent || '').trim();
+          const match = text.match(/\d{1,2}/);
+          if (!match) return null;
+          return { day: match[0], available: td.className.includes('ui-state-available') };
+        })
+        .filter(Boolean);
     });
 
-    const available = days.filter((d) => isGreenMarker(d.marker));
+    await page.screenshot({ path: join(__dirname, 'screenshot.png'), fullPage: true });
+
+    const available = days.filter((d) => d.available);
 
     if (days.length === 0) {
       log('WARNING: found 0 day cells - selector heuristic may not match this page, check screenshot.png');
-      await page.screenshot({ path: join(__dirname, 'screenshot.png'), fullPage: true });
     } else if (available.length > 0) {
       log(`SLOT AVAILABLE: days ${available.map((d) => d.day).join(', ')}`);
       notify();
