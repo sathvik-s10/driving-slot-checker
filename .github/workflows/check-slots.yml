@@ -45,6 +45,6 @@ jobs:
         if: always()
         with:
           name: latest-screenshot
-          path: screenshot-*.png
+          path: screenshot.png
           retention-days: 1
           overwrite: true

@@ -67,30 +67,12 @@ async function login(page, username, password) {
   ]);
 }
 
-async function scrapeMonth(page) {
-  const monthLabel = await page.$eval('.ui-datepicker-title', (el) => el.textContent.trim()).catch(() => 'unknown month');
-  const days = await page.$$eval('td[class*="ui-state-"]', (cells) => {
-    return cells
-      .map((td) => {
-        const text = (td.textContent || '').trim();
-        const match = text.match(/\d{1,2}/);
-        if (!match) return null;
-        return { day: match[0], available: td.className.includes('ui-state-available') };
-      })
-      .filter(Boolean);
-  });
-  return { monthLabel, days };
-}
-
-async function goToNextMonth(page) {
-  const before = await page.$eval('.ui-datepicker-title', (el) => el.textContent.trim()).catch(() => null);
-  await page.click('.ui-datepicker-next');
-  await page.waitForFunction(
-    (prev) => document.querySelector('.ui-datepicker-title')?.textContent.trim() !== prev,
-    before,
-    { timeout: 10000 }
-  ).catch(() => {});
-  await page.waitForTimeout(500);
+async function readAvailableDates(page) {
+  return page.evaluate(() => ({
+    availableRaw: document.querySelector('#hdnAvailableDates')?.value ?? '',
+    minDate: document.querySelector('#hdnMindate')?.value?.trim() ?? '',
+    maxDate: document.querySelector('#hdnMaxdate')?.value?.trim() ?? ''
+  }));
 }
 
 async function main() {
@@ -122,40 +104,31 @@ async function main() {
     // give the calendar widget time to render after login redirect
     await page.waitForTimeout(2000);
 
-    const MONTHS_TO_CHECK = 3;
-    const allAvailable = [];
-    let totalDaysChecked = 0;
-    let anyZeroDayWarning = false;
-
-    for (let i = 0; i < MONTHS_TO_CHECK; i++) {
-      const { monthLabel, days } = await scrapeMonth(page);
-      await page.screenshot({ path: join(__dirname, `screenshot-${i + 1}.png`), fullPage: true });
-
-      if (days.length === 0) {
-        anyZeroDayWarning = true;
-        log(`WARNING: found 0 day cells for ${monthLabel} - selector heuristic may not match this page, check screenshot-${i + 1}.png`);
-      } else {
-        totalDaysChecked += days.length;
-        const available = days.filter((d) => d.available);
-        if (available.length > 0) {
-          allAvailable.push({ monthLabel, days: available.map((d) => d.day) });
-        }
-      }
-
-      if (i < MONTHS_TO_CHECK - 1) {
-        await goToNextMonth(page);
-      }
+    if (process.env.TEST_FORCE_AVAILABLE === '1') {
+      // test-only: inject a fake date into the real backend field so the real detection path fires naturally
+      await page.evaluate(() => {
+        const el = document.querySelector('#hdnAvailableDates');
+        if (el) el.value = '2026-8-21';
+      });
+      log('TEST_FORCE_AVAILABLE: injected fake date into #hdnAvailableDates');
     }
 
-    if (allAvailable.length > 0) {
-      const summary = allAvailable.map((m) => `${m.monthLabel}: ${m.days.join(', ')}`).join(' | ');
-      log(`SLOT AVAILABLE: ${summary}`);
+    const { availableRaw, minDate, maxDate } = await readAvailableDates(page);
+    await page.screenshot({ path: join(__dirname, 'screenshot.png'), fullPage: true });
+
+    const availableDates = availableRaw
+      .split(',')
+      .map((d) => d.trim())
+      .filter(Boolean);
+
+    if (!minDate && !maxDate && !availableRaw) {
+      log('WARNING: hdnAvailableDates/hdnMindate/hdnMaxdate not found on page - site markup may have changed, check screenshot.png');
+    } else if (availableDates.length > 0) {
+      log(`SLOT AVAILABLE: ${availableDates.join(', ')}`);
       notify();
       await callPhone();
-    } else if (anyZeroDayWarning && totalDaysChecked === 0) {
-      log('WARNING: no day cells found in any checked month, check screenshots');
     } else {
-      log(`No open slots. Checked ${totalDaysChecked} days across ${MONTHS_TO_CHECK} months, none green.`);
+      log(`No open slots. Range checked: ${minDate} to ${maxDate}.`);
     }
   } catch (err) {
     log(`ERROR: ${err.message}`);
