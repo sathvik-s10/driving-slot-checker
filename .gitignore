@@ -5,5 +5,6 @@ screenshot.png
 screenshot-*.png
 error.png
 session.json
+notified.json
 live-calendar.png
 inspect-output.txt

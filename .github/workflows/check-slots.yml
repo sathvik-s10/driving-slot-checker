@@ -26,6 +26,12 @@ jobs:
           key: tds-session-${{ github.run_id }}
           restore-keys: tds-session-
 
+      - uses: actions/cache/restore@v4
+        with:
+          path: notified.json
+          key: tds-notified-${{ github.run_id }}
+          restore-keys: tds-notified-
+
       - run: node check-slots.js
         env:
           TDS_USERNAME: ${{ secrets.TDS_USERNAME }}
@@ -40,6 +46,12 @@ jobs:
         with:
           path: session.json
           key: tds-session-${{ github.run_id }}
+
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: notified.json
+          key: tds-notified-${{ github.run_id }}
 
       - uses: actions/upload-artifact@v4
         if: always()

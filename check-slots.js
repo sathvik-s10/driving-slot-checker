@@ -2,13 +2,14 @@ import 'dotenv/config';
 import { chromium } from 'playwright';
 import twilio from 'twilio';
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LOG_FILE = join(__dirname, 'check.log');
 const SESSION_FILE = join(__dirname, 'session.json');
+const NOTIFIED_FILE = join(__dirname, 'notified.json');
 
 const LOGIN_URL = 'https://www.tds.ms/CentralizeSP/Student/Login/Redmond911';
 const SCHEDULE_URL = 'https://www.tds.ms/CentralizeSP/BtwScheduling/Lessons?SchedulingTypeId=1';
@@ -65,6 +66,19 @@ async function login(page, username, password) {
     page.waitForNavigation({ waitUntil: 'domcontentloaded' }).catch(() => {}),
     page.click('button.btn.green-haze.pull-right')
   ]);
+}
+
+function loadNotifiedDates() {
+  if (!existsSync(NOTIFIED_FILE)) return [];
+  try {
+    return JSON.parse(readFileSync(NOTIFIED_FILE, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+function saveNotifiedDates(dates) {
+  writeFileSync(NOTIFIED_FILE, JSON.stringify(dates));
 }
 
 async function readAvailableDates(page) {
@@ -124,10 +138,22 @@ async function main() {
     if (!minDate && !maxDate && !availableRaw) {
       log('WARNING: hdnAvailableDates/hdnMindate/hdnMaxdate not found on page - site markup may have changed, check screenshot.png');
     } else if (availableDates.length > 0) {
-      log(`SLOT AVAILABLE: ${availableDates.join(', ')}`);
-      notify();
-      await callPhone();
+      const previousNotified = loadNotifiedDates();
+      const sameAsLastNotified =
+        JSON.stringify([...availableDates].sort()) === JSON.stringify([...previousNotified].sort());
+
+      if (sameAsLastNotified) {
+        log(`SLOT AVAILABLE (already notified, not calling again): ${availableDates.join(', ')}`);
+      } else {
+        log(`SLOT AVAILABLE: ${availableDates.join(', ')}`);
+        notify();
+        await callPhone();
+        saveNotifiedDates(availableDates);
+      }
     } else {
+      if (loadNotifiedDates().length > 0) {
+        saveNotifiedDates([]); // reset so the next opening triggers a fresh call
+      }
       log(`No open slots. Range checked: ${minDate} to ${maxDate}.`);
     }
   } catch (err) {
